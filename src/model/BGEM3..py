@@ -2,13 +2,14 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Union, List
 import os
 
+from ..utils.arguments import ModelArguments
+
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer, XLMRobertaModel, XLMRobertaTokenizer
 from transformers.file_utils import ModelOutput
-from huggingface_hub import snapshot_download
 
 
 @dataclass
@@ -21,16 +22,17 @@ class EncoderOutput(ModelOutput):
 
 class M3DenseEmbedModel(nn.Module):
 
-    def __init__(self,
-                 model_name: str = None,
-                 normlized: bool = True,
-                 sentence_pooling_method: str = 'cls',
-                 negatives_cross_device: bool = False,
-                 temperature: float = 1.0,
-                 enable_sub_batch: bool = True,
-                 ):
+    def __init__(
+        self,
+        model_load_args: ModelArguments = None,
+        normlized: bool = True,
+        sentence_pooling_method: str = "cls",
+        negatives_cross_device: bool = False,
+        temperature: float = 1.0,
+        enable_sub_batch: bool = True,
+    ):
         super().__init__()
-        self.load_model(model_name)
+        self.load_model(model_load_args)
         self.vocab_size = self.model.config.vocab_size
         self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
 
@@ -51,12 +53,13 @@ class M3DenseEmbedModel(nn.Module):
             self.process_rank = dist.get_rank()
             self.world_size = dist.get_world_size()
 
-    def load_model(self, model_name):
-        if not os.path.exists(model_name):
-            raise NotImplementedError("model path not found")
+    def load_model(self, model_load_args:ModelArguments):
+        if not os.path.exists(model_load_args.model_path):
+            raise FileNotFoundError(f"cannot find model {model_load_args.model_path}")
 
-        self.model:XLMRobertaModel = AutoModel.from_pretrained(model_name)
-        self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path)
+        tokenizer_path = model_load_args.tokenizer_path if model_load_args.tokenizer_path is not None else model_load_args.model_path
+        self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     def gradient_checkpointing_enable(self, **kwargs):
         self.model.gradient_checkpointing_enable(**kwargs)
@@ -82,7 +85,7 @@ class M3DenseEmbedModel(nn.Module):
             dense_vecs = F.normalize(dense_vecs, dim=-1)
         return dense_vecs
 
-    def encode(self, features, sub_batch_size=None) -> Tensor:
+    def encode(self, features: Dict[str, Tensor]=None, sub_batch_size=None) -> Tensor:
         if features is None:
             return None
 
@@ -137,7 +140,7 @@ class M3DenseEmbedModel(nn.Module):
 
             targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
             dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
-
+            # TODO 没见过的交叉熵用法 https://github.com/FlagOpen/FlagEmbedding/issues/935
             loss = self.compute_loss(dense_scores, targets)
 
         self.step += 1
@@ -170,14 +173,14 @@ class M3DenseEmbedModel(nn.Module):
 class M3ForInference(M3DenseEmbedModel):
     def __init__(
         self,
-        model_name: str = None,
+        model_load_args: ModelArguments = None,
         normlized: bool = True,
         sentence_pooling_method: str = "cls",
         temperature: float = 1.0,
         use_fp16: bool = True
     ):
         super().__init__(
-            model_name=model_name,
+            model_load_args=model_load_args,
             normlized=normlized,
             sentence_pooling_method=sentence_pooling_method,
             negatives_cross_device=False,
@@ -195,11 +198,13 @@ class M3ForInference(M3DenseEmbedModel):
         if self.num_gpus > 1:
             self.model = torch.nn.DataParallel(self.model)
 
-    def forward(self,
-                sentences: Union[List[str], str],
-                batch_size: int = 256,
-                max_length: int = 8192
-                ) -> Tensor:
+    @torch.no_grad()
+    def inference(
+        self,
+        sentences: Union[List[str], str],
+        batch_size: int = 256,
+        max_length: int = 8192,
+    ) -> Tensor:
         self.model.eval()
 
         input_was_string = False
