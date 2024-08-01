@@ -2,23 +2,24 @@ import argparse
 import json
 import random
 import numpy as np
-# TODO 这个的hnsw可以用gpu加速
 import faiss
 from tqdm import tqdm
-# TODO 本地模型适配
-from ..model.flag_model import FlagModel
+from ..model.bgem3 import M3ForInference
 
 
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name_or_path', default="BAAI/bge-base-en", type=str)
     parser.add_argument('--input_file', default=None, type=str)
-    parser.add_argument('--candidate_pool', default=None, type=str)
     parser.add_argument('--output_file', default=None, type=str)
     parser.add_argument('--range_for_sampling', default="10-210", type=str, help="range to sample negatives")
-    parser.add_argument('--use_gpu_for_searching', action='store_true', help='use faiss-gpu')
+    parser.add_argument('--use_gpu_for_embedding', default=False, help='load model in gpu')
+    parser.add_argument('--use_gpu_for_searching', default=False,
+                        help='use faiss-gpu, faiss-gpu can only import on linux else faiss-cpu on win')
     parser.add_argument('--negative_number', default=15, type=int, help='the number of negatives')
-    parser.add_argument('--query_instruction_for_retrieval', default="")
+    parser.add_argument('--embed_batch_size', default=256,
+                        help="batch size when getting query/corpus embedding, independent with search_batch_size")
+    parser.add_argument('--search_batch_size', default=64, help="search batch size with baiss knn")
 
     return parser.parse_args()
 
@@ -35,7 +36,7 @@ def create_index(embeddings, use_gpu):
     return index
 
 
-def batch_search(index,
+def batch_search(index: faiss.IndexFlatIP,
                  query,
                  topk: int = 200,
                  batch_size: int = 64):
@@ -48,15 +49,19 @@ def batch_search(index,
     return all_scores, all_inxs
 
 
-def get_corpus(candidate_pool):
-    corpus = []
-    for line in open(candidate_pool):
-        line = json.loads(line.strip())
-        corpus.append(line['text'])
-    return corpus
-
-
-def find_knn_neg(model, input_file, candidate_pool, output_file, sample_range, negative_number, use_gpu):
+def find_knn_neg(
+    model,
+    input_file,
+    output_file,
+    sample_range,
+    negative_number,
+    use_gpu,
+    embed_batch_size,
+    search_batch_size,
+):
+    '''
+    检索sample_range[-1]个最近的vec, 滤掉pos中的和与query相等的, 最终取negative_number个
+    '''
     corpus = []
     queries = []
     train_data = []
@@ -67,22 +72,13 @@ def find_knn_neg(model, input_file, candidate_pool, output_file, sample_range, n
         if 'neg' in line:
             corpus.extend(line['neg'])
         queries.append(line['query'])
+    corpus = list(set(corpus))
 
-    if candidate_pool is not None:
-        if not isinstance(candidate_pool, list):
-            candidate_pool = get_corpus(candidate_pool)
-        corpus = list(set(candidate_pool))
-    else:
-        corpus = list(set(corpus))
+    p_vecs = model(corpus, batch_size=embed_batch_size)
+    q_vecs = model(queries, batch_size=embed_batch_size)
 
-    print(f'inferencing embedding for corpus (number={len(corpus)})--------------')
-    p_vecs = model.encode(corpus, batch_size=256)
-    print(f'inferencing embedding for queries (number={len(queries)})--------------')
-    q_vecs = model.encode_queries(queries, batch_size=256)
-
-    print('create index and search------------------')
     index = create_index(p_vecs, use_gpu=use_gpu)
-    _, all_inxs = batch_search(index, q_vecs, topk=sample_range[-1])
+    _, all_inxs = batch_search(index, q_vecs, topk=sample_range[-1], batch_size=search_batch_size)
     assert len(all_inxs) == len(train_data)
 
     for i, data in enumerate(train_data):
@@ -109,15 +105,17 @@ def find_knn_neg(model, input_file, candidate_pool, output_file, sample_range, n
 
 if __name__ == '__main__':
     args = get_args()
-    sample_range = args.range_for_sampling.split('-')
-    sample_range = [int(x) for x in sample_range]
+    sample_range = list(map(int, args.range_for_sampling.split('-')))
 
-    model = FlagModel(args.model_name_or_path, query_instruction_for_retrieval=args.query_instruction_for_retrieval)
+    model = M3ForInference(model_load_args=args.model_name_or_path,
+                           device="cuda" if args.use_gpu_for_embedding else "cpu")
 
     find_knn_neg(model,
                  input_file=args.input_file,
-                 candidate_pool=args.candidate_pool,
                  output_file=args.output_file,
                  sample_range=sample_range,
                  negative_number=args.negative_number,
-                 use_gpu=args.use_gpu_for_searching)
+                 use_gpu=args.use_gpu_for_searching,
+                 embed_batch_size=args.embed_batch_size,
+                 search_batch_size=args.search_batch_size
+                 )
