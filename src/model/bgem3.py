@@ -140,7 +140,6 @@ class M3DenseEmbedModel(nn.Module):
 
             targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
             dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
-            # TODO 没见过的交叉熵用法 https://github.com/FlagOpen/FlagEmbedding/issues/935
             loss = self.compute_loss(dense_scores, targets)
 
         self.step += 1
@@ -199,7 +198,7 @@ class M3ForInference(M3DenseEmbedModel):
             self.model = torch.nn.DataParallel(self.model)
 
     @torch.no_grad()
-    def inference(
+    def __call__(
         self,
         sentences: Union[List[str], str],
         batch_size: int = 256,
