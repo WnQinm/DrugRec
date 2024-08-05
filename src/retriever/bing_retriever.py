@@ -4,14 +4,8 @@ from typing import List
 
 
 class BingRetriever(BaseRetriever):
-    def __init__(
-        self,
-        tokenizer_path,
-        retriever_ckpt_path,
-        device=None,
-        scorer_max_batch_size=400,
-    ) -> None:
-        super().__init__(tokenizer_path, retriever_ckpt_path, device, scorer_max_batch_size)
+    def __init__(self, model_args, device="cpu", scorer_max_batch_size=400) -> None:
+        super().__init__(model_args, device, scorer_max_batch_size)
 
     def get_search_result(self, question: str) -> List[SearchResult]:
         results = []

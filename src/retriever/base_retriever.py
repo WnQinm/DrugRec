@@ -1,5 +1,7 @@
 from .playwright_based_crawl_new import FetchRawPage
 from ..model.contriver import ContrieverScorer
+from ..model.bgem3 import M3ForScore
+from ..utils.arguments import ModelArguments
 import re
 from html2text import html2text
 from abc import ABC, abstractmethod
@@ -25,9 +27,9 @@ class SearchResult:
 
 
 class BaseRetriever(ABC):
-    def __init__(self, tokenizer_path, retriever_ckpt_path, device=None, scorer_max_batch_size=400) -> None:
+    def __init__(self, model_args:ModelArguments, device="cpu", scorer_max_batch_size=400) -> None:
         self.loop = asyncio.get_event_loop()
-        self.scorer = ContrieverScorer(tokenizer_path, retriever_ckpt_path, device, scorer_max_batch_size)
+        self.scorer = M3ForScore(model_args, device=device, batch_size=scorer_max_batch_size)
 
     @abstractmethod
     def get_search_result(self, question: str) -> List[SearchResult]:
@@ -71,7 +73,7 @@ class BaseRetriever(ABC):
             ret.append(item)
         return ret
 
-    def query(self, question:str, result_length_low:int=50, result_length_high:int=1200, topk:int=5):
+    def query(self, question:str, result_length_low:int=50, result_length_high:int=2048, topk:int=5):
         search_results = self._search(question)
         if len(search_results) == 0:
             return None

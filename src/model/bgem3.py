@@ -41,7 +41,6 @@ class M3DenseEmbedModel(nn.Module):
         self.enable_sub_batch = enable_sub_batch
         self.temperature = temperature
 
-        self.step = 0
         if not normlized:
             self.temperature = 1.0
 
@@ -115,6 +114,7 @@ class M3DenseEmbedModel(nn.Module):
             return torch.matmul(q_reps, p_reps.transpose(0, 1))
         return torch.matmul(q_reps, p_reps.transpose(-2, -1))
 
+    # trainer的data_collator输出的dict键值要匹配forward的输入
     def forward(self, query: Dict[str, Tensor] = None, passage: Dict[str, Tensor] = None):
         self.model.train()
 
@@ -141,8 +141,6 @@ class M3DenseEmbedModel(nn.Module):
             targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
             dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
             loss = self.compute_loss(dense_scores, targets)
-
-        self.step += 1
 
         return EncoderOutput(
             loss=loss,
@@ -176,7 +174,8 @@ class M3ForInference(M3DenseEmbedModel):
         normlized: bool = True,
         sentence_pooling_method: str = "cls",
         temperature: float = 1.0,
-        use_fp16: bool = True
+        use_fp16: bool = True,
+        device: str = "cpu"
     ):
         super().__init__(
             model_load_args=model_load_args,
@@ -186,7 +185,7 @@ class M3ForInference(M3DenseEmbedModel):
             temperature=temperature,
             enable_sub_batch=False,
         )
-        if torch.cuda.is_available():
+        if torch.cuda.is_available() and device == "cuda":
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
@@ -219,8 +218,78 @@ class M3ForInference(M3DenseEmbedModel):
             return_tensors="pt",
             max_length=max_length,
         ).to(self.device)
-        all_embeddings = self.encode(inputs, batch_size)
+        all_embeddings = self.encode(inputs, batch_size).detach().cpu()
 
         if input_was_string:
             return all_embeddings[0]
         return all_embeddings
+
+
+class M3ForScore(M3DenseEmbedModel):
+    def __init__(
+        self,
+        model_load_args: ModelArguments,
+        normlized: bool = True,
+        sentence_pooling_method: str = "cls",
+        temperature: float = 1.0,
+        use_fp16: bool = True,
+        device: str = "cpu",
+        batch_size: int = 512
+    ):
+        super().__init__(
+            model_load_args=model_load_args,
+            normlized=normlized,
+            sentence_pooling_method=sentence_pooling_method,
+            negatives_cross_device=False,
+            temperature=temperature,
+            enable_sub_batch=False,
+        )
+        if torch.cuda.is_available() and device == "cuda":
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
+            use_fp16 = False
+        if use_fp16: self.model.half()
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        self.num_gpus = torch.cuda.device_count()
+        if self.num_gpus > 1:
+            self.model = torch.nn.DataParallel(self.model)
+        self.batch_size = batch_size
+        self.max_length = 8192
+
+    def encode(self, features: Dict[str, Tensor]=None, sub_batch_size=None) -> Tensor:
+        torch.cuda.empty_cache()
+        return super().encode(features, sub_batch_size)
+
+    def select_topk(self, query: str, documents: List[str], k=1) -> torch.Tensor:
+        """
+        Returns:
+            `ret`: `torch.return_types.topk`, use `ret.values` or `ret.indices` to get value or index tensor
+        """
+        query = self.tokenizer(
+            [query],
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+        ).to(self.device)
+        documents = self.tokenizer(
+            documents,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.max_length,
+        ).to(self.device)
+
+        query = self.encode(query)
+        documents = self.encode(documents, self.batch_size)
+
+        scores = self.dense_score(query, documents)
+        return scores.topk(min(k, len(scores))).indices
+
+    def __call__(self, query, paragraphs: List[Dict[str, str]], topk=5) -> List[Dict[str, str]]:
+        texts = [item['text'] for item in paragraphs]
+        topk = self.select_topk(query, texts, topk)
+        indices = list(topk.detach().cpu().numpy())
+        return [paragraphs[int(idx)] for idx in indices]
