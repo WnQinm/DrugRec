@@ -5,19 +5,19 @@ import numpy as np
 import faiss
 from tqdm import tqdm
 from ..model.bgem3 import M3ForInference
+from arguments import ModelArguments
 
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model_name_or_path', default="BAAI/bge-base-en", type=str)
-    parser.add_argument('--input_file', default=None, type=str)
-    parser.add_argument('--output_file', default=None, type=str)
+    parser.add_argument('--input_file', default="./data/drugs_dataset.json", type=str)
+    parser.add_argument('--output_file', default="./data/drugs_dataset_mine.json", type=str)
     parser.add_argument('--range_for_sampling', default="10-210", type=str, help="range to sample negatives")
-    parser.add_argument('--use_gpu_for_embedding', default=False, help='load model in gpu')
+    parser.add_argument('--use_gpu_for_embedding', default=True, help='load model in gpu')
     parser.add_argument('--use_gpu_for_searching', default=False,
                         help='use faiss-gpu, faiss-gpu can only import on linux else faiss-cpu on win')
     parser.add_argument('--negative_number', default=15, type=int, help='the number of negatives')
-    parser.add_argument('--embed_batch_size', default=256,
+    parser.add_argument('--embed_batch_size', default=4,
                         help="batch size when getting query/corpus embedding, independent with search_batch_size")
     parser.add_argument('--search_batch_size', default=64, help="search batch size with baiss knn")
 
@@ -106,9 +106,7 @@ def find_knn_neg(
 if __name__ == '__main__':
     args = get_args()
     sample_range = list(map(int, args.range_for_sampling.split('-')))
-
-    model = M3ForInference(model_load_args=args.model_name_or_path,
-                           device="cuda" if args.use_gpu_for_embedding else "cpu")
+    model = M3ForInference(model_load_args=ModelArguments(), device="cuda" if args.use_gpu_for_embedding else "cpu")
 
     find_knn_neg(model,
                  input_file=args.input_file,
