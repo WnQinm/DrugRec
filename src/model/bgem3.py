@@ -196,7 +196,6 @@ class M3ForInference(M3DenseEmbedModel):
         if self.num_gpus > 1:
             self.model = torch.nn.DataParallel(self.model)
 
-    @torch.no_grad()
     def __call__(
         self,
         sentences: Union[List[str], str],
@@ -218,7 +217,7 @@ class M3ForInference(M3DenseEmbedModel):
             return_tensors="pt",
             max_length=max_length,
         ).to(self.device)
-        all_embeddings = self.encode(inputs, batch_size).detach().cpu()
+        all_embeddings = self.encode(inputs, batch_size)
 
         if input_was_string:
             return all_embeddings[0]
@@ -258,10 +257,6 @@ class M3ForScore(M3DenseEmbedModel):
         self.batch_size = batch_size
         self.max_length = 8192
 
-    def encode(self, features: Dict[str, Tensor]=None, sub_batch_size=None) -> Tensor:
-        torch.cuda.empty_cache()
-        return super().encode(features, sub_batch_size)
-
     def select_topk(self, query: str, documents: List[str], k=1) -> torch.Tensor:
         """
         Returns:
@@ -285,11 +280,12 @@ class M3ForScore(M3DenseEmbedModel):
         query = self.encode(query)
         documents = self.encode(documents, self.batch_size)
 
-        scores = self.dense_score(query, documents)
+        scores = self.dense_score(query, documents).squeeze_()
         return scores.topk(min(k, len(scores))).indices
 
     def __call__(self, query, paragraphs: List[Dict[str, str]], topk=5) -> List[Dict[str, str]]:
+        torch.cuda.empty_cache()
         texts = [item['text'] for item in paragraphs]
         topk = self.select_topk(query, texts, topk)
-        indices = list(topk.detach().cpu().numpy())
+        indices = topk.detach().cpu().numpy().tolist()
         return [paragraphs[int(idx)] for idx in indices]
