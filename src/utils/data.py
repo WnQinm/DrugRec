@@ -1,8 +1,8 @@
-import math
-import os.path
+import torch
 import random
+import json
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import datasets
 from torch.utils.data import Dataset
@@ -10,54 +10,49 @@ from transformers import DataCollatorWithPadding, PreTrainedTokenizer
 
 from .arguments import DataArguments
 
-# TODO 本地数据集适配
-class TrainDatasetForEmbedding(Dataset):
-    def __init__(
-            self,
-            args: DataArguments,
-            tokenizer: PreTrainedTokenizer
-    ):
-        if os.path.isdir(args.train_data):
-            train_datasets = []
-            for file in os.listdir(args.train_data):
-                temp_dataset = datasets.load_dataset('json', data_files=os.path.join(args.train_data, file),
-                                                     split='train')
-                if len(temp_dataset) > args.max_example_num_per_dataset:
-                    temp_dataset = temp_dataset.select(
-                        random.sample(list(range(len(temp_dataset))), args.max_example_num_per_dataset))
-                train_datasets.append(temp_dataset)
-            self.dataset = datasets.concatenate_datasets(train_datasets)
-        else:
-            self.dataset = datasets.load_dataset('json', data_files=args.train_data, split='train')
 
-        self.tokenizer = tokenizer
+class TrainDatasetForEmbedding(Dataset):
+    def __init__(self, args: DataArguments):
+        self.drug_data = self._load_json(args.drug_data)
+        self.pos2neg = self._load_json(args.pos2neg)
+        self.link_data = datasets.load_dataset("json", data_files=args.link_data, split="train")
         self.args = args
-        self.total_len = len(self.dataset)
+        self.total_len = len(self.link_data)
+
+    def _load_json(self, file_path) -> dict:
+        with open(file_path, "r") as f:
+            return json.load(f)
 
     def __len__(self):
         return self.total_len
 
-    def __getitem__(self, item) -> Tuple[str, List[str]]:
-        query = self.dataset[item]['query']
-        if self.args.query_instruction_for_retrieval is not None:
-            query = self.args.query_instruction_for_retrieval + query
-
-        passages = []
-
-        assert isinstance(self.dataset[item]['pos'], list)
-        pos = random.choice(self.dataset[item]['pos'])
-        passages.append(pos)
-
-        if len(self.dataset[item]['neg']) < self.args.train_group_size - 1:
-            num = math.ceil((self.args.train_group_size - 1) / len(self.dataset[item]['neg']))
-            negs = random.sample(self.dataset[item]['neg'] * num, self.args.train_group_size - 1)
+    def _fetch_data(self, target, mode:str):
+        if mode == "entity":
+            neg_set = [random.choice(self.drug_data[neg]["names"])
+                       for neg in random.sample(self.pos2neg[target], self.args.train_group_size - 1)]
+            return [target] + neg_set
+        elif mode.startswith("desc"):
+            neg_set = [self.drug_data[neg]["description"]
+                       for neg in random.sample(self.pos2neg[target], self.args.train_group_size - 1)]
+            return [self.drug_data[target]["description"]] + neg_set
         else:
-            negs = random.sample(self.dataset[item]['neg'], self.args.train_group_size - 1)
-        passages.extend(negs)
+            raise NotImplementedError
 
-        if self.args.passage_instruction_for_retrieval is not None:
-            passages = [self.args.passage_instruction_for_retrieval+p for p in passages]
-        return query, passages
+    def __getitem__(self, item) -> Tuple[List[str], List[str], str, List[str], List[str]]:
+        link = self.link_data[item]
+        head, tail, link_desc = link["entity1"], link["entity2"], link["description"]
+
+        assert 0 < self.args.train_group_size < len(self.pos2neg[head])
+        assert 0 < self.args.train_group_size < len(self.pos2neg[tail])
+
+        head_desc = self._fetch_data(head, "desc")
+        tail_desc = self._fetch_data(tail, "desc")
+        head = self._fetch_data(head, "entity")
+        tail = self._fetch_data(tail, "entity")
+        head[0] = self.drug_data[head[0]]["names"][0]
+        tail[0] = self.drug_data[tail[0]]["names"][0]
+
+        return head, head_desc, link_desc, tail, tail_desc
 
 
 @dataclass
@@ -67,48 +62,36 @@ class EmbedCollator(DataCollatorWithPadding):
     and pass batch separately to the actual collator.
     Abstract out data detail for the model.
     """
-    query_max_len: int = 32
-    passage_max_len: int = 128
+    query_max_len: int = 1024
+    passage_max_len: int = 8192
 
-    def padding_score(self, teacher_score):
-        group_size = None
-        for scores in teacher_score:
-            if scores is not None:
-                group_size = len(scores)
-                break
-        if group_size is None:
-            return None
-
-        padding_scores = [100.0] + [0.0] * (group_size - 1)
-        new_teacher_score = []
-        for scores in teacher_score:
-            if scores is None:
-                new_teacher_score.append(padding_scores)
-            else:
-                new_teacher_score.append(scores)
-        return new_teacher_score
-
-    def __call__(self, features):
-        query = [f[0] for f in features]
-        passage = [f[1] for f in features]
-
-        if isinstance(query[0], list):
-            query = sum(query, [])
-        if isinstance(passage[0], list):
-            passage = sum(passage, [])
-
-        q_collated = self.tokenizer(
-            query,
+    def tokenize(self, sentence):
+        return self.tokenizer(
+            sentence,
             padding=True,
             truncation=True,
             max_length=self.query_max_len,
             return_tensors="pt",
         )
-        d_collated = self.tokenizer(
-            passage,
-            padding=True,
-            truncation=True,
-            max_length=self.passage_max_len,
-            return_tensors="pt",
-        )
-        return {"query": q_collated, "passage": d_collated}
+
+    def sort_neg(self, batch:List[Tuple[str]]) -> List[Tuple[str]]:
+        '''
+        将负样本部分按长度排好序 可以一定程度减少padding的长度
+        '''
+        return [batch[0]] + list(zip(*[sorted(i, key=len) for i in zip(*batch[1:])]))
+
+    def __call__(self, features):
+        # [bathc_size, ] * (pos + (group_size-1)*neg)
+        head = self.sort_neg(features[0])
+        head_desc = self.sort_neg(features[1])
+        link_desc = features[2]
+        tail = self.sort_neg(features[3])
+        tail_desc = self.sort_neg(features[4])
+
+        head = list(map(self.tokenize, head))
+        head_desc = list(map(self.tokenize, head_desc))
+        link_desc = self.tokenize(link_desc)
+        tail = list(map(self.tokenize, tail))
+        tail_desc = list(map(self.tokenize, tail_desc))
+
+        return head, head_desc, link_desc, tail, tail_desc
