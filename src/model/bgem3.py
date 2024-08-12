@@ -1,50 +1,33 @@
-from dataclasses import dataclass
 from typing import Dict, Optional, Union, List
 import os
 
 from ..utils.arguments import ModelArguments
+from ..utils.info_nce import InfoNCE
 
 import torch
 import torch.distributed as dist
 from torch import nn, Tensor
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer, XLMRobertaModel, XLMRobertaTokenizer
-from transformers.file_utils import ModelOutput
-
-
-@dataclass
-class EncoderOutput(ModelOutput):
-    q_reps: Optional[Tensor] = None
-    p_reps: Optional[Tensor] = None
-    loss: Optional[Tensor] = None
-    scores: Optional[Tensor] = None
 
 
 class M3DenseEmbedModel(nn.Module):
 
-    def __init__(
-        self,
-        model_load_args: ModelArguments = None,
-        normlized: bool = True,
-        sentence_pooling_method: str = "cls",
-        negatives_cross_device: bool = False,
-        temperature: float = 1.0,
-        enable_sub_batch: bool = True,
-    ):
+    def __init__(self, model_args: ModelArguments):
         super().__init__()
-        self.load_model(model_load_args)
+        self.load_model(model_args)
         self.vocab_size = self.model.config.vocab_size
         self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
+        self.info_nce = InfoNCE(negative_mode="paired")
 
-        self.normlized = normlized
-        self.sentence_pooling_method = sentence_pooling_method
-        self.enable_sub_batch = enable_sub_batch
-        self.temperature = temperature
+        self.normlized = model_args.normlized
+        self.temperature = model_args.temperature
+        self.sub_batch_size = model_args.encode_sub_batch_size
 
-        if not normlized:
+        if not model_args.normlized:
             self.temperature = 1.0
 
-        self.negatives_cross_device = negatives_cross_device
+        self.negatives_cross_device = model_args.negatives_cross_device
         if self.negatives_cross_device:
             if not dist.is_initialized():
                 raise ValueError('Distributed training has not been initialized for representation all gather.')
@@ -63,13 +46,8 @@ class M3DenseEmbedModel(nn.Module):
     def gradient_checkpointing_enable(self, **kwargs):
         self.model.gradient_checkpointing_enable(**kwargs)
 
-    def dense_embedding(self, hidden_state, mask):
-        if self.sentence_pooling_method == 'cls':
-            return hidden_state[:, 0]
-        elif self.sentence_pooling_method == 'mean':
-            s = torch.sum(hidden_state * mask.unsqueeze(-1).float(), dim=1)
-            d = mask.sum(axis=1, keepdim=True).float()
-            return s / d
+    def dense_embedding(self, hidden_state):
+        return hidden_state[:, 0]
 
     def dense_score(self, q_reps, p_reps):
         scores = self.compute_similarity(q_reps, p_reps) / self.temperature
@@ -84,14 +62,14 @@ class M3DenseEmbedModel(nn.Module):
             dense_vecs = F.normalize(dense_vecs, dim=-1)
         return dense_vecs
 
-    def encode(self, features: Dict[str, Tensor]=None, sub_batch_size=None) -> Tensor:
+    def encode(self, features: Dict[str, Tensor]=None) -> Tensor:
         if features is None:
             return None
 
-        if sub_batch_size is not None and sub_batch_size != -1:
+        if self.sub_batch_size is not None and self.sub_batch_size != -1:
             all_dense_vecs = []
-            for i in range(0, len(features['attention_mask']), sub_batch_size):
-                end_inx = min(i + sub_batch_size, len(features['attention_mask']))
+            for i in range(0, len(features['attention_mask']), self.sub_batch_size):
+                end_inx = min(i + self.sub_batch_size, len(features['attention_mask']))
                 sub_features = {}
                 for k, v in features.items():
                     sub_features[k] = v[i:end_inx]
@@ -102,52 +80,10 @@ class M3DenseEmbedModel(nn.Module):
 
         return dense_vecs.contiguous()
 
-    def compute_sub_batch_size(self, features) -> int:
-        mapping = [(6000, 1), (5000, 2), (4000, 3), (3000, 3), (2000, 5), (1000, 9), (512, 16), (0, 32)]
-        cur_l = features['input_ids'].size(-1)
-        for l, b in mapping:
-            if cur_l >= l:
-                return b
-
     def compute_similarity(self, q_reps:Tensor, p_reps:Tensor):
         if len(p_reps.size()) == 2:
             return torch.matmul(q_reps, p_reps.transpose(0, 1))
         return torch.matmul(q_reps, p_reps.transpose(-2, -1))
-
-    # trainer的data_collator输出的dict键值要匹配forward的输入
-    def forward(self, query: Dict[str, Tensor] = None, passage: Dict[str, Tensor] = None):
-        self.model.train()
-
-        if self.enable_sub_batch:
-            q_dense_vecs = self.encode(query, sub_batch_size=self.compute_sub_batch_size(query))
-            p_dense_vecs = self.encode(passage, sub_batch_size=self.compute_sub_batch_size(passage))
-        else:
-            q_dense_vecs = self.encode(query)
-            p_dense_vecs = self.encode(passage)
-
-        if self.negatives_cross_device:
-            cross_q_dense_vecs = self._dist_gather_tensor(q_dense_vecs)
-            cross_p_dense_vecs = self._dist_gather_tensor(p_dense_vecs)
-
-            cross_idxs = torch.arange(cross_q_dense_vecs.size(0), device=cross_q_dense_vecs.device, dtype=torch.long)
-
-            cross_targets = cross_idxs * (cross_p_dense_vecs.size(0) // cross_q_dense_vecs.size(0))
-            cross_dense_scores = self.dense_score(cross_q_dense_vecs, cross_p_dense_vecs)
-
-            loss = self.compute_loss(cross_dense_scores, cross_targets)
-        else:
-            idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
-
-            targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
-            dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
-            loss = self.compute_loss(dense_scores, targets)
-
-        return EncoderOutput(
-            loss=loss,
-        )
-
-    def compute_loss(self, scores, target):
-        return self.cross_entropy(scores, target)
 
     def _dist_gather_tensor(self, t: Optional[Tensor]) -> Tensor:
         if t is None:
@@ -161,6 +97,30 @@ class M3DenseEmbedModel(nn.Module):
         all_tensors = torch.cat(all_tensors, dim=0)
 
         return all_tensors
+
+    # TODO 原先是单个query操作 检查现在batch操作适配性
+    # TODO 这有可能导致那个梯度inplace报错
+    def entity_reconstruction_loss(self, q_dense_vecs: Tensor, p_dense_vecs: Tensor):
+        if self.negatives_cross_device:
+            q_dense_vecs = self._dist_gather_tensor(q_dense_vecs)
+            p_dense_vecs = self._dist_gather_tensor(p_dense_vecs)
+
+        idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
+
+        targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
+        dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
+        loss = self.cross_entropy(dense_scores, targets)
+
+        return loss
+
+    def kg_embed_loss(self, head, link_desc, tail) -> List[Tensor]:
+        head_pos = head[:, 0, :]
+        head_neg = head[:, 1:, :]
+        tail_pos = tail[:, 0, :]
+        tail_neg = tail[:, 1:, :]
+
+        return [self.info_nce(head_pos + link_desc, tail_pos, tail_neg),
+                self.info_nce(tail_pos - link_desc, head_pos, head_neg)]
 
     def save(self, output_dir: str) -> None:
         _trans_state_dict = lambda state_dict: type(state_dict)({k: v.clone().cpu() for k,v in state_dict.items()})
