@@ -1,9 +1,11 @@
-from transformers.trainer import *
+import os
+import logging
+from transformers.trainer import Trainer
 from transformers.file_utils import ModelOutput
 import torch
 from torch import Tensor
 from dataclasses import dataclass
-from typing import List, Dict, Union, Tuple
+from typing import List, Dict, Union, Tuple, Optional
 from src.model.bgem3 import M3DenseEmbedModel
 
 
@@ -19,7 +21,7 @@ class CustomTrainer(Trainer):
     def _save(self, output_dir: Optional[str] = None, state_dict=None):
         output_dir = output_dir if output_dir is not None else self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
-        logger.info("Saving model checkpoint to %s", output_dir)
+        logging.info("Saving model checkpoint to %s", output_dir)
         # Save a trained model and configuration using `save_pretrained()`.
         # They can then be reloaded using `from_pretrained()`
         if not hasattr(self.model, 'save'):

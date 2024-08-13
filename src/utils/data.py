@@ -1,4 +1,3 @@
-import torch
 import random
 import json
 from dataclasses import dataclass
@@ -6,7 +5,7 @@ from typing import List, Tuple, Dict
 
 import datasets
 from torch.utils.data import Dataset
-from transformers import DataCollatorWithPadding, PreTrainedTokenizer
+from transformers import DataCollatorWithPadding
 
 from .arguments import DataArguments
 
@@ -62,15 +61,14 @@ class EmbedCollator(DataCollatorWithPadding):
     and pass batch separately to the actual collator.
     Abstract out data detail for the model.
     """
-    query_max_len: int = 1024
-    passage_max_len: int = 8192
+    input_max_len: int = 8192
 
     def tokenize(self, sentence):
         return self.tokenizer(
             sentence,
             padding=True,
             truncation=True,
-            max_length=self.query_max_len,
+            max_length=self.input_max_len,
             return_tensors="pt",
         )
 
