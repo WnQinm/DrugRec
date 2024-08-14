@@ -36,11 +36,9 @@ def main(json_path):
     set_seed(training_args.seed)
 
     logging.info("load model...")
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_path,
-        use_fast=False,
-    )
     model = M3DenseEmbedModel(model_args)
+    model.train()
+    tokenizer = model.tokenizer
 
     if training_args.fix_position_embedding:
         for k, v in model.named_parameters():

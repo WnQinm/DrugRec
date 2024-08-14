@@ -36,18 +36,16 @@ class M3DenseEmbedModel(nn.Module):
             self.world_size = dist.get_world_size()
 
     def load_model(self, model_load_args:ModelArguments):
-        if not os.path.exists(model_load_args.model_path):
-            raise FileNotFoundError(f"cannot find model {model_load_args.model_path}")
+        if model_load_args.train_with_fp16:
+            self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path, low_cpu_mem_usage=True, device_map="auto", torch_dtype=torch.half, add_pooling_layer=False)
+        else:
+            self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path, low_cpu_mem_usage=True, device_map="auto", add_pooling_layer=False)
+        self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
 
-        self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path)
-        tokenizer_path = model_load_args.tokenizer_path if model_load_args.tokenizer_path is not None else model_load_args.model_path
-        self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-
-    def gradient_checkpointing_enable(self, **kwargs):
-        self.model.gradient_checkpointing_enable(**kwargs)
-
-    def dense_embedding(self, hidden_state):
-        return hidden_state[:, 0]
+        if model_load_args.train_with_lora:
+            from peft import LoraConfig, TaskType, get_peft_model
+            config = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION, target_modules=model_load_args.lora_modules)
+            self.model = get_peft_model(self.model, config)
 
     def dense_score(self, q_reps, p_reps):
         scores = self.compute_similarity(q_reps, p_reps) / self.temperature
@@ -57,7 +55,7 @@ class M3DenseEmbedModel(nn.Module):
     def _encode(self, features) -> Tensor:
         dense_vecs = None
         last_hidden_state = self.model(**features, return_dict=True).last_hidden_state
-        dense_vecs = self.dense_embedding(last_hidden_state, features['attention_mask'])
+        dense_vecs = last_hidden_state[:, 0]
         if self.normlized:
             dense_vecs = F.normalize(dense_vecs, dim=-1)
         return dense_vecs
@@ -119,8 +117,7 @@ class M3DenseEmbedModel(nn.Module):
         tail_pos = tail[:, 0, :]
         tail_neg = tail[:, 1:, :]
 
-        return [self.info_nce(head_pos + link_desc, tail_pos, tail_neg),
-                self.info_nce(tail_pos - link_desc, head_pos, head_neg)]
+        return self.info_nce(head_pos + link_desc, tail_pos, tail_neg), self.info_nce(tail_pos - link_desc, head_pos, head_neg)
 
     def save(self, output_dir: str) -> None:
         _trans_state_dict = lambda state_dict: type(state_dict)({k: v.clone().cpu() for k,v in state_dict.items()})

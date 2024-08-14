@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union, List
 
 from transformers import TrainingArguments
 
@@ -17,20 +17,19 @@ class ModelArguments:
         metadata={"help": "Path to pretrained model"}
     )
     tokenizer_path: Optional[str] = field(
-        default=None,
+        default="./checkpoint/m3/",
         metadata={"help": "Pretrained tokenizer path if not the same as model_name"},
     )
-    normlized: bool = field(default=True)
-    negatives_cross_device: bool = field(default=False)
-    temperature: float = field(default=0.02)
-    encode_sub_batch_size: int = field(default=1)
-
-    def __post_init__(self):
-        if (self.model_path is None) or (not os.path.exists(self.model_path)):
-            raise ValueError("model path is None or not found")
-        self.tokenizer_path = self.model_path if self.tokenizer_path is None else self.tokenizer_path
-        if not os.path.exists(self.tokenizer_path):
-            raise ValueError("tokenizer not found")
+    normlized: bool = field(default=True, metadata={"help": ""})
+    negatives_cross_device: bool = field(default=False, metadata={"help": "share negatives across devices"})
+    temperature: float = field(default=0.02, metadata={"help": ""})
+    encode_sub_batch_size: int = field(default=1, metadata={"help": ""})
+    train_with_fp16: bool = field(default=True, metadata={"help": ""})
+    train_with_lora: bool = field(default=True, metadata={"help": ""})
+    lora_modules: Union[str, List[str]] = field(
+        default=None,
+        metadata={"help": ""},
+    )
 
 
 @dataclass
@@ -64,17 +63,6 @@ class DataArguments:
     passage_instruction_for_retrieval: str = field(
         default=None, metadata={"help": "instruction for passage"}
     )
-    negatives_cross_device: bool = field(
-        default=False, metadata={"help": "share negatives across devices"}
-    )
-
-    def __post_init__(self):
-        if (
-            (self.drug_data is None) or (not os.path.exists(self.drug_data)) or
-            (self.pos2neg   is None) or (not os.path.exists(self.pos2neg  )) or
-            (self.link_data is None) or (not os.path.exists(self.link_data))
-        ):
-            raise ValueError("dataset not found")
 
 
 @dataclass

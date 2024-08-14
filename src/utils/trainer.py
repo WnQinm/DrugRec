@@ -51,13 +51,11 @@ class CustomTrainer(Trainer):
         # (batch_size, embed_size)
         link_desc = model.encode(link_desc)
 
-        loss = []
-
         query = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
         passage = torch.cat([head_desc, tail_desc], dim=0)
-        loss.append(model.entity_reconstruction_loss(query, passage))
+        loss1 = model.entity_reconstruction_loss(query, passage)
 
-        loss.extend(model.kg_embed_loss(head, link_desc, tail))
+        loss2, loss3 = model.kg_embed_loss(head, link_desc, tail)
 
-        loss = torch.mean(torch.stack(loss))
+        loss = (loss1 + loss2 + loss3) / 3
         return (loss, EncoderOutput(loss=loss)) if return_outputs else loss

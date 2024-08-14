@@ -76,9 +76,10 @@ class EmbedCollator(DataCollatorWithPadding):
         '''
         将负样本部分按长度排好序 可以一定程度减少padding的长度
         '''
-        return [batch[0]] + list(zip(*[sorted(i, key=len) for i in zip(*batch[1:])]))
+        return [batch[0]] + list(*zip(*[sorted(i, key=len) for i in zip(batch[1:])]))
 
     def __call__(self, features):
+        features = features[0]
         # [bathc_size, ] * (pos + (group_size-1)*neg)
         head = self.sort_neg(features[0])
         head_desc = self.sort_neg(features[1])
