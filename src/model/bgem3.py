@@ -28,24 +28,46 @@ class M3DenseEmbedModel(nn.Module):
             self.temperature = 1.0
 
         self.negatives_cross_device = model_args.negatives_cross_device
-        if self.negatives_cross_device:
-            if not dist.is_initialized():
-                raise ValueError('Distributed training has not been initialized for representation all gather.')
 
-            self.process_rank = dist.get_rank()
-            self.world_size = dist.get_world_size()
+    def gradient_checkpointing_enable(self, **kwargs):
+        self.model.enable_input_require_grads()
+        self.model.gradient_checkpointing_enable(**kwargs)
 
     def load_model(self, model_load_args:ModelArguments):
-        if model_load_args.train_with_fp16:
-            self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path, low_cpu_mem_usage=True, device_map="auto", torch_dtype=torch.half, add_pooling_layer=False)
+        if model_load_args.train_with_qlora:
+            self.model: XLMRobertaModel = AutoModel.from_pretrained(
+                model_load_args.model_path,
+                low_cpu_mem_usage=True,
+                torch_dtype=torch.bfloat16,
+                device_map="auto",
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
         else:
-            self.model:XLMRobertaModel = AutoModel.from_pretrained(model_load_args.model_path, low_cpu_mem_usage=True, device_map="auto", add_pooling_layer=False)
+            torch_dtype = torch.float32
+            if model_load_args.train_with_fp16:
+                torch_dtype = torch.half
+            self.model: XLMRobertaModel = AutoModel.from_pretrained(
+                model_load_args.model_path,
+                low_cpu_mem_usage=True,
+                device_map="auto",
+                torch_dtype=torch_dtype,
+                add_pooling_layer=False,
+            )
         self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
 
         if model_load_args.train_with_lora:
             from peft import LoraConfig, TaskType, get_peft_model
             config = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION, target_modules=model_load_args.lora_modules)
             self.model = get_peft_model(self.model, config)
+            if model_load_args.train_with_fp16:
+                for name, param in self.model.named_parameters():
+                    if "lora" in name:
+                        param.data = param.data.half()
+                        if param.grad is not None and param.grad.data is not None:
+                            param.grad.data = param.grad.data.half()
 
     def dense_score(self, q_reps, p_reps):
         scores = self.compute_similarity(q_reps, p_reps) / self.temperature
@@ -88,10 +110,10 @@ class M3DenseEmbedModel(nn.Module):
             return None
         t = t.contiguous()
 
-        all_tensors = [torch.empty_like(t) for _ in range(self.world_size)]
+        all_tensors = [torch.empty_like(t) for _ in range(dist.get_world_size())]
         dist.all_gather(all_tensors, t)
 
-        all_tensors[self.process_rank] = t
+        all_tensors[dist.get_rank()] = t
         all_tensors = torch.cat(all_tensors, dim=0)
 
         return all_tensors
@@ -118,6 +140,23 @@ class M3DenseEmbedModel(nn.Module):
         tail_neg = tail[:, 1:, :]
 
         return self.info_nce(head_pos + link_desc, tail_pos, tail_neg), self.info_nce(tail_pos - link_desc, head_pos, head_neg)
+
+    def forward(self, inputs):
+        # torch.cuda.empty_cache()
+        head, head_desc, link_desc, tail, tail_desc = inputs
+
+        # (batch_size, group_size, embed_size)
+        head, head_desc, tail, tail_desc = map(lambda x: torch.stack(list(map(self.encode, x)), dim=1), (head, head_desc, tail, tail_desc))
+        # (batch_size, embed_size)
+        link_desc = self.encode(link_desc)
+
+        query = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
+        passage = torch.cat([head_desc, tail_desc], dim=0)
+
+        loss1 = self.entity_reconstruction_loss(query, passage)
+        loss2, loss3 = self.kg_embed_loss(head, link_desc, tail)
+
+        return (loss1 + loss2 + loss3) / 3
 
     def save(self, output_dir: str) -> None:
         _trans_state_dict = lambda state_dict: type(state_dict)({k: v.clone().cpu() for k,v in state_dict.items()})

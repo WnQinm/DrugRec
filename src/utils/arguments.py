@@ -5,7 +5,6 @@ from typing import Optional, Union, List
 from transformers import TrainingArguments
 
 
-# TODO json参数控制 https://blog.csdn.net/sjxgghg/article/details/131229480
 @dataclass
 class ModelArguments:
     """
@@ -24,12 +23,13 @@ class ModelArguments:
     negatives_cross_device: bool = field(default=False, metadata={"help": "share negatives across devices"})
     temperature: float = field(default=0.02, metadata={"help": ""})
     encode_sub_batch_size: int = field(default=1, metadata={"help": ""})
-    train_with_fp16: bool = field(default=True, metadata={"help": ""})
-    train_with_lora: bool = field(default=True, metadata={"help": ""})
+    train_with_fp16: bool = field(default=False, metadata={"help": ""})
+    train_with_lora: bool = field(default=False, metadata={"help": ""})
     lora_modules: Union[str, List[str]] = field(
         default=None,
         metadata={"help": ""},
     )
+    train_with_qlora: bool = field(default=False, metadata={"help": ""})
 
 
 @dataclass

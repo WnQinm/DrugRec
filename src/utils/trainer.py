@@ -41,21 +41,5 @@ class CustomTrainer(Trainer):
 
         Subclass and override for custom behavior.
         """
-        head, head_desc, link_desc, tail, tail_desc = inputs
-
-        # (batch_size, group_size, embed_size)
-        head = torch.stack(list(map(model.encode, head)), dim=1)
-        head_desc = torch.stack(list(map(model.encode, head_desc)), dim=1)
-        tail = torch.stack(list(map(model.encode, tail)), dim=1)
-        tail_desc = torch.stack(list(map(model.encode, tail_desc)), dim=1)
-        # (batch_size, embed_size)
-        link_desc = model.encode(link_desc)
-
-        query = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
-        passage = torch.cat([head_desc, tail_desc], dim=0)
-        loss1 = model.entity_reconstruction_loss(query, passage)
-
-        loss2, loss3 = model.kg_embed_loss(head, link_desc, tail)
-
-        loss = (loss1 + loss2 + loss3) / 3
+        loss = model(inputs)
         return (loss, EncoderOutput(loss=loss)) if return_outputs else loss

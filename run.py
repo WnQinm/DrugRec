@@ -49,6 +49,7 @@ def main(json_path):
     logging.info("load dataset...")
     train_dataset = TrainDatasetForEmbedding(args=data_args)
 
+    logging.info("prepare trainer...")
     trainer = CustomTrainer(
         model=model,
         args=training_args,
