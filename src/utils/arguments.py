@@ -23,7 +23,8 @@ class ModelArguments:
     negatives_cross_device: bool = field(default=False, metadata={"help": "share negatives across devices"})
     temperature: float = field(default=0.02, metadata={"help": ""})
     encode_sub_batch_size: int = field(default=1, metadata={"help": ""})
-    train_with_fp16: bool = field(default=False, metadata={"help": ""})
+    model_with_fp16: bool = field(default=False, metadata={"help": ""})
+    lora_with_fp16: bool = field(default=False, metadata={"help": ""})
     train_with_lora: bool = field(default=False, metadata={"help": ""})
     lora_modules: Union[str, List[str]] = field(
         default=None,

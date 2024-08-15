@@ -13,9 +13,6 @@ from src.utils.trainer import CustomTrainer
 def main(json_path):
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainArguments))
     model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(json_path))
-    model_args: ModelArguments
-    data_args: DataArguments
-    training_args: TrainArguments
 
     # Setup logging
     logging.basicConfig(
@@ -24,12 +21,11 @@ def main(json_path):
         level=logging.INFO,
     )
     logging.info(
-        "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s",
+        "Process rank: %s, device: %s, n_gpu: %s, distributed training: %s",
         training_args.local_rank,
         training_args.device,
         training_args.n_gpu,
-        bool(training_args.local_rank != -1),
-        training_args.fp16,
+        bool(training_args.local_rank != -1)
     )
 
     # Set seed

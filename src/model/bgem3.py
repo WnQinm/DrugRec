@@ -1,11 +1,9 @@
 from typing import Dict, Optional, Union, List
-import os
 
 from ..utils.arguments import ModelArguments
 from ..utils.info_nce import InfoNCE
 
 import torch
-import torch.distributed as dist
 from torch import nn, Tensor
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer, XLMRobertaModel, XLMRobertaTokenizer
@@ -27,8 +25,6 @@ class M3DenseEmbedModel(nn.Module):
         if not model_args.normlized:
             self.temperature = 1.0
 
-        self.negatives_cross_device = model_args.negatives_cross_device
-
     def gradient_checkpointing_enable(self, **kwargs):
         self.model.enable_input_require_grads()
         self.model.gradient_checkpointing_enable(**kwargs)
@@ -47,7 +43,7 @@ class M3DenseEmbedModel(nn.Module):
             )
         else:
             torch_dtype = torch.float32
-            if model_load_args.train_with_fp16:
+            if model_load_args.model_with_fp16:
                 torch_dtype = torch.half
             self.model: XLMRobertaModel = AutoModel.from_pretrained(
                 model_load_args.model_path,
@@ -56,13 +52,14 @@ class M3DenseEmbedModel(nn.Module):
                 torch_dtype=torch_dtype,
                 add_pooling_layer=False,
             )
+
         self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
 
         if model_load_args.train_with_lora:
             from peft import LoraConfig, TaskType, get_peft_model
             config = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION, target_modules=model_load_args.lora_modules)
             self.model = get_peft_model(self.model, config)
-            if model_load_args.train_with_fp16:
+            if model_load_args.lora_with_fp16:
                 for name, param in self.model.named_parameters():
                     if "lora" in name:
                         param.data = param.data.half()
@@ -105,26 +102,7 @@ class M3DenseEmbedModel(nn.Module):
             return torch.matmul(q_reps, p_reps.transpose(0, 1))
         return torch.matmul(q_reps, p_reps.transpose(-2, -1))
 
-    def _dist_gather_tensor(self, t: Optional[Tensor]) -> Tensor:
-        if t is None:
-            return None
-        t = t.contiguous()
-
-        all_tensors = [torch.empty_like(t) for _ in range(dist.get_world_size())]
-        dist.all_gather(all_tensors, t)
-
-        all_tensors[dist.get_rank()] = t
-        all_tensors = torch.cat(all_tensors, dim=0)
-
-        return all_tensors
-
-    # TODO 原先是单个query操作 检查现在batch操作适配性
-    # TODO 这有可能导致那个梯度inplace报错
     def entity_reconstruction_loss(self, q_dense_vecs: Tensor, p_dense_vecs: Tensor):
-        if self.negatives_cross_device:
-            q_dense_vecs = self._dist_gather_tensor(q_dense_vecs)
-            p_dense_vecs = self._dist_gather_tensor(p_dense_vecs)
-
         idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
 
         targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
