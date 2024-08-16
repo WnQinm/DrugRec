@@ -155,7 +155,6 @@ class M3ForInference(M3DenseEmbedModel):
             model_load_args=model_load_args,
             normlized=normlized,
             sentence_pooling_method=sentence_pooling_method,
-            negatives_cross_device=False,
             temperature=temperature,
             enable_sub_batch=False,
         )
@@ -213,7 +212,6 @@ class M3ForScore(M3DenseEmbedModel):
             model_load_args=model_load_args,
             normlized=normlized,
             sentence_pooling_method=sentence_pooling_method,
-            negatives_cross_device=False,
             temperature=temperature,
             enable_sub_batch=False,
         )

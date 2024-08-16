@@ -14,6 +14,10 @@ def main(json_path):
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainArguments))
     model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(json_path))
 
+    if model_args.train_with_qlora:
+        training_args.optim = "paged_adamw_32bit"
+        training_args.adam_epsilon = 1e-4
+
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",

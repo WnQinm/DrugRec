@@ -20,7 +20,6 @@ class ModelArguments:
         metadata={"help": "Pretrained tokenizer path if not the same as model_name"},
     )
     normlized: bool = field(default=True, metadata={"help": ""})
-    negatives_cross_device: bool = field(default=False, metadata={"help": "share negatives across devices"})
     temperature: float = field(default=0.02, metadata={"help": ""})
     encode_sub_batch_size: int = field(default=1, metadata={"help": ""})
     model_with_fp16: bool = field(default=False, metadata={"help": ""})
