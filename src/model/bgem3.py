@@ -14,7 +14,6 @@ class M3DenseEmbedModel(nn.Module):
     def __init__(self, model_args: ModelArguments):
         super().__init__()
         self.load_model(model_args)
-        self.vocab_size = self.model.config.vocab_size
         self.cross_entropy = nn.CrossEntropyLoss(reduction='mean')
         self.info_nce = InfoNCE(negative_mode="paired")
 
@@ -66,11 +65,6 @@ class M3DenseEmbedModel(nn.Module):
                         if param.grad is not None and param.grad.data is not None:
                             param.grad.data = param.grad.data.half()
 
-    def dense_score(self, q_reps, p_reps):
-        scores = self.compute_similarity(q_reps, p_reps) / self.temperature
-        scores = scores.view(q_reps.size(0), -1)
-        return scores
-
     def _encode(self, features) -> Tensor:
         dense_vecs = None
         last_hidden_state = self.model(**features, return_dict=True).last_hidden_state
@@ -97,14 +91,19 @@ class M3DenseEmbedModel(nn.Module):
 
         return dense_vecs.contiguous()
 
-    def compute_similarity(self, q_reps:Tensor, p_reps:Tensor):
-        if len(p_reps.size()) == 2:
-            return torch.matmul(q_reps, p_reps.transpose(0, 1))
+    def compute_similarity(self, q_reps:Tensor, p_reps:Tensor) -> Tensor:
         return torch.matmul(q_reps, p_reps.transpose(-2, -1))
 
-    def entity_reconstruction_loss(self, q_dense_vecs: Tensor, p_dense_vecs: Tensor):
-        idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
+    def dense_score(self, q_reps, p_reps):
+        scores = self.compute_similarity(q_reps, p_reps) / self.temperature
+        scores = scores.view(q_reps.size(0), -1)
+        return scores
 
+    def entity_embed_loss(self, head:Tensor, head_desc:Tensor, tail:Tensor, tail_desc:Tensor) -> Tensor:
+        q_dense_vecs = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
+        p_dense_vecs = torch.cat([head_desc, tail_desc], dim=0)
+
+        idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
         targets = idxs * (p_dense_vecs.size(0) // q_dense_vecs.size(0))
         dense_scores = self.dense_score(q_dense_vecs, p_dense_vecs)  # B, B * N
         loss = self.cross_entropy(dense_scores, targets)
@@ -117,21 +116,20 @@ class M3DenseEmbedModel(nn.Module):
         tail_pos = tail[:, 0, :]
         tail_neg = tail[:, 1:, :]
 
-        return self.info_nce(head_pos + link_desc, tail_pos, tail_neg), self.info_nce(tail_pos - link_desc, head_pos, head_neg)
+        return (self.info_nce(head_pos + link_desc, tail_pos, tail_neg),
+                self.info_nce(tail_pos - link_desc, head_pos, head_neg))
 
     def forward(self, inputs):
         # torch.cuda.empty_cache()
         head, head_desc, link_desc, tail, tail_desc = inputs
 
         # (batch_size, group_size, embed_size)
-        head, head_desc, tail, tail_desc = map(lambda x: torch.stack(list(map(self.encode, x)), dim=1), (head, head_desc, tail, tail_desc))
+        f = lambda x: torch.stack(list(map(self.encode, x)), dim=1)
+        head, head_desc, tail, tail_desc = map(f, (head, head_desc, tail, tail_desc))
         # (batch_size, embed_size)
         link_desc = self.encode(link_desc)
 
-        query = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
-        passage = torch.cat([head_desc, tail_desc], dim=0)
-
-        loss1 = self.entity_reconstruction_loss(query, passage)
+        loss1 = self.entity_embed_loss(head, head_desc, tail, tail_desc)
         loss2, loss3 = self.kg_embed_loss(head, link_desc, tail)
 
         return (loss1 + loss2 + loss3) / 3
@@ -145,19 +143,10 @@ class M3ForInference(M3DenseEmbedModel):
     def __init__(
         self,
         model_load_args: ModelArguments = None,
-        normlized: bool = True,
-        sentence_pooling_method: str = "cls",
-        temperature: float = 1.0,
         use_fp16: bool = True,
         device: str = "cpu"
     ):
-        super().__init__(
-            model_load_args=model_load_args,
-            normlized=normlized,
-            sentence_pooling_method=sentence_pooling_method,
-            temperature=temperature,
-            enable_sub_batch=False,
-        )
+        super().__init__(model_load_args)
         if torch.cuda.is_available() and device == "cuda":
             self.device = torch.device("cuda")
         else:
@@ -172,7 +161,6 @@ class M3ForInference(M3DenseEmbedModel):
     def __call__(
         self,
         sentences: Union[List[str], str],
-        batch_size: int = 256,
         max_length: int = 8192,
     ) -> Tensor:
         self.model.eval()
@@ -180,7 +168,6 @@ class M3ForInference(M3DenseEmbedModel):
         input_was_string = False
         if isinstance(sentences, str):
             sentences = [sentences]
-            batch_size = None
             input_was_string = True
 
         inputs = self.tokenizer(
@@ -190,7 +177,7 @@ class M3ForInference(M3DenseEmbedModel):
             return_tensors="pt",
             max_length=max_length,
         ).to(self.device)
-        all_embeddings = self.encode(inputs, batch_size)
+        all_embeddings = self.encode(inputs)
 
         if input_was_string:
             return all_embeddings[0]

@@ -59,7 +59,6 @@ def find_knn_neg(
     sample_range,
     negative_number,
     use_gpu,
-    embed_batch_size,
     search_batch_size,
 ):
 
@@ -71,8 +70,8 @@ def find_knn_neg(
         # TODO random choice
         queries:List[str] = [d["names"][0] for d in input_data.values()]
 
-    p_vecs = model(corpus, batch_size=embed_batch_size).detach().cpu()
-    q_vecs = model(queries, batch_size=embed_batch_size).detach().cpu()
+    p_vecs = model(corpus).detach().cpu()
+    q_vecs = model(queries).detach().cpu()
 
     index = create_index(p_vecs, use_gpu=use_gpu)
     _, all_inxs = batch_search(index, q_vecs, topk=sample_range[-1], batch_size=search_batch_size)
@@ -98,7 +97,8 @@ if __name__ == '__main__':
     with torch.no_grad():
         args = get_args()
         sample_range = list(map(int, args.range_for_sampling.split('-')))
-        model = M3ForInference(model_load_args=ModelArguments(), device="cuda" if args.use_gpu_for_embedding else "cpu")
+        model = M3ForInference(model_load_args=ModelArguments(encode_sub_batch_size=args.embed_batch_size),
+                               device="cuda" if args.use_gpu_for_embedding else "cpu")
 
         find_knn_neg(model,
                     input_file=args.input_file,
@@ -106,6 +106,5 @@ if __name__ == '__main__':
                     sample_range=sample_range,
                     negative_number=args.negative_number,
                     use_gpu=args.use_gpu_for_searching,
-                    embed_batch_size=args.embed_batch_size,
                     search_batch_size=args.search_batch_size
                     )
