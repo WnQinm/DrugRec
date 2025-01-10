@@ -11,14 +11,13 @@
     "lora_modules": [
         "query", "value"
     ],
+    "cache_dir": "./cache",
 
     "drug_data": "./data/drugs.json",
     "pos2neg": "./data/drugs_neg.json",
     "link_data": "./data/links.json",
     "train_group_size": 8,
     "input_max_len": 1024,
-    "query_instruction_for_retrieval": null,
-    "passage_instruction_for_retrieval": null,
 
     "fix_position_embedding": false,
     "output_dir": "./output",
@@ -27,7 +26,7 @@
     "learning_rate": 1e-5,
     "num_train_epochs": 5,
     "logging_steps": 10,
-    "save_steps": 100,
+    "save_steps": 500,
     "dataloader_drop_last": true,
     "dataloader_num_workers": 8,
     "save_total_limit": 5,

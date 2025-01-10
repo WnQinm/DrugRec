@@ -31,6 +31,8 @@ class ModelArguments:
     )
     train_with_qlora: bool = field(default=False, metadata={"help": ""})
 
+    cache_dir: str = field(default="./cache", metadata={"help": ""})
+
 
 @dataclass
 class DataArguments:
@@ -56,12 +58,6 @@ class DataArguments:
             "help": "The maximum total input sequence length after tokenization for passage. Sequences longer "
                     "than this will be truncated, sequences shorter will be padded."
         },
-    )
-    query_instruction_for_retrieval: str = field(
-        default=None, metadata={"help": "instruction for query"}
-    )
-    passage_instruction_for_retrieval: str = field(
-        default=None, metadata={"help": "instruction for passage"}
     )
 
 
