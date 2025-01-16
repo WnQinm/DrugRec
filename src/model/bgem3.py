@@ -109,17 +109,12 @@ class M3ForInference(M3DenseEmbedModel):
     def __init__(
         self,
         model_load_args: ModelArguments = None,
-        use_fp16: bool = True,
-        device: str = "cpu"
+        use_fp16: bool = True
     ):
         super().__init__(model_load_args)
-        if torch.cuda.is_available() and device == "cuda":
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
-            use_fp16 = False
+        if not torch.cuda.is_available():
+            raise NotImplementedError("gpu not found")
         if use_fp16: self.model.half()
-        self.model = self.model.to(device)
         self.num_gpus = torch.cuda.device_count()
         if self.num_gpus > 1:
             self.model = torch.nn.DataParallel(self.model)
@@ -154,46 +149,36 @@ class M3ForScore(M3DenseEmbedModel):
     def __init__(
         self,
         model_load_args: ModelArguments,
-        normlized: bool = True,
-        sentence_pooling_method: str = "cls",
-        temperature: float = 1.0,
-        use_fp16: bool = True,
-        device: str = "cpu",
-        batch_size: int = 512
+        use_fp16: bool = True
     ):
-        super().__init__(
-            model_load_args=model_load_args,
-            normlized=normlized,
-            sentence_pooling_method=sentence_pooling_method,
-            temperature=temperature,
-            enable_sub_batch=False,
-        )
-        if torch.cuda.is_available() and device == "cuda":
-            device = torch.device("cuda")
-        else:
-            device = torch.device("cpu")
-            use_fp16 = False
+        super().__init__(model_args=model_load_args)
+        if not torch.cuda.is_available():
+            raise NotImplementedError("gpu not found")
         if use_fp16: self.model.half()
-        self.model = self.model.to(device)
         self.model.eval()
         self.num_gpus = torch.cuda.device_count()
         if self.num_gpus > 1:
             self.model = torch.nn.DataParallel(self.model)
-        self.batch_size = batch_size
         self.max_length = 8192
 
-    def select_topk(self, query: str, documents: List[str], k=1) -> torch.Tensor:
+    def select_topk(self, query: Union[str, Tensor], documents: List[str], k=1) -> torch.Tensor:
         """
         Returns:
             `ret`: `torch.return_types.topk`, use `ret.values` or `ret.indices` to get value or index tensor
         """
-        query = self.tokenizer(
-            [query],
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            max_length=self.max_length,
-        ).to(self.device)
+        if isinstance(query, str):
+            query = self.tokenizer(
+                [query],
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+                max_length=self.max_length,
+            ).to(self.device)
+            query = self.encode(query)
+
+        if isinstance(query, Tensor) and len(query.shape)==1:
+            query = query.unsqueeze_(dim=0)
+
         documents = self.tokenizer(
             documents,
             padding=True,
@@ -201,9 +186,7 @@ class M3ForScore(M3DenseEmbedModel):
             return_tensors="pt",
             max_length=self.max_length,
         ).to(self.device)
-
-        query = self.encode(query)
-        documents = self.encode(documents, self.batch_size)
+        documents = self.encode(documents)
 
         scores = self.dense_score(query, documents).squeeze_()
         return scores.topk(min(k, len(scores))).indices

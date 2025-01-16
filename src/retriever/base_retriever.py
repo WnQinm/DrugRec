@@ -5,7 +5,8 @@ import requests
 from bs4 import BeautifulSoup as bs
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import List, Dict, Tuple, Optional
+from typing import List, Union, Optional
+from torch import Tensor
 import json
 
 
@@ -25,9 +26,9 @@ class SearchResult:
 
 
 class BaseRetriever(ABC):
-    def __init__(self, model_args:ModelArguments, device="cpu", scorer_max_batch_size=400) -> None:
+    def __init__(self, model_args:ModelArguments, **scorer_args) -> None:
         if model_args.model_path:
-            self.scorer = M3ForScore(model_args, device=device, batch_size=scorer_max_batch_size)
+            self.scorer = M3ForScore(model_args, **scorer_args)
         self.headers = {
             "content": "text/html; charset=UTF-8",
             "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -39,10 +40,14 @@ class BaseRetriever(ABC):
         }
 
     @abstractmethod
-    def get_search_result(self, question: str) -> List[SearchResult]:
+    def get_search_result(
+        self,
+        question: Union[str, List[str]],
+        min_search_result_num: Optional[int] = None,
+    ) -> List[SearchResult]:
         pass
 
-    def _search(self, question:str, max_tries:int=3) -> List[SearchResult]:
+    def _search(self, question: Union[str, List[str]], max_tries:int=3) -> List[SearchResult]:
         cnt = 0
         while cnt < max_tries:
             cnt += 1
@@ -67,8 +72,11 @@ class BaseRetriever(ABC):
         fetch_result = defaultdict(list)
         for url in urls:
             try:
-                response = requests.get(url, headers=self.headers, timeout=60, verify=False)
+                response = requests.get(url, headers=self.headers, timeout=60)
             except:
+                continue
+            # cloudflare 五秒盾
+            if response.status_code != 200:
                 continue
             if 'html' not in response.headers['Content-Type']:
                 continue
@@ -81,7 +89,7 @@ class BaseRetriever(ABC):
                     fetch_result[url].append(p)
         return fetch_result
 
-    def query(self, question:str, result_length_low:int=50):
+    def query(self, question: Union[str, List[str]], result_length_low:int=50):
         search_results = self._search(question)
         if len(search_results) == 0:
             return None
@@ -99,6 +107,13 @@ class BaseRetriever(ABC):
 
         return data_list
 
-    def __call__(self, question:str, result_length_low:int=50, topk:int=5):
+    '''
+    question: str when drug, [icd_code, long_title] when disease
+    '''
+    def __call__(self, question: str, result_length_low:int=50, topk:int=5, reference: Tensor=None):
         data_list = self.query(question, result_length_low)
-        return self.scorer(question, data_list, topk)
+        if data_list is None:
+            return []
+        if reference is None:
+            reference = question if isinstance(question, str) else question[1]
+        return self.scorer(reference, data_list, topk)

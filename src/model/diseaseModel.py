@@ -58,5 +58,5 @@ class Model(M3DenseEmbedModel):
         x = self.encode(x)
         self.features[idx] = x
         px = torch.mm(self.P, self.features)
-        score = self.dense_score(x, px)
+        score = self.dense_score(x, px[idx])
         return -score
