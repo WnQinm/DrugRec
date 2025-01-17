@@ -36,6 +36,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
+    # drug arg
     drug_data: str = field(
         default="./data/drugs.json",
         metadata={"help": r"format {drugbank_id: {names:[], description:''}}"},
@@ -52,6 +53,17 @@ class DataArguments:
         },
     )
     train_group_size: int = field(default=8)
+
+    # disease arg
+    all_disease_list: str = field(
+        default="./data/all_disease.csv",
+        metadata={"help": ""}
+    )
+    node_data: str = field(
+        default="./data/disease_search_res.json",
+        metadata={"help": ""}
+    )
+
     input_max_len: int = field(
         default=8192,
         metadata={
@@ -65,4 +77,7 @@ class DataArguments:
 class TrainArguments(TrainingArguments):
     fix_position_embedding: bool = field(
         default=False, metadata={"help": "Freeze the parameters of position embeddings"}
+    )
+    training_goal: str = field(
+        default="disease", metadata={"help": "drug, disease, mimic"}
     )

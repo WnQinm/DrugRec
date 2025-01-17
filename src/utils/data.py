@@ -1,17 +1,19 @@
 import random
 import json
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 
 import datasets
+import pandas as pd
 from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding
 
 from .arguments import DataArguments
 
 
-class TrainDatasetForEmbedding(Dataset):
+class DrugDataset(Dataset):
     def __init__(self, args: DataArguments):
+        super().__init__()
         self.drug_data = self._load_json(args.drug_data)
         self.pos2neg = self._load_json(args.pos2neg)
         self.link_data = datasets.load_dataset("json", data_files=args.link_data, split="train")
@@ -55,9 +57,9 @@ class TrainDatasetForEmbedding(Dataset):
 
 
 @dataclass
-class EmbedCollator(DataCollatorWithPadding):
+class DrugCollator(DataCollatorWithPadding):
     """
-    Wrapper that does conversion from List[Tuple[encode_qry, encode_psg]] to List[qry], List[psg]
+    Wrapper that does conversion from List[Tuple[dataset output]] to List[output1], List[output2]
     and pass batch separately to the actual collator.
     Abstract out data detail for the model.
     """
@@ -94,3 +96,38 @@ class EmbedCollator(DataCollatorWithPadding):
         tail_desc = list(map(self.tokenize, tail_desc))
 
         return head, head_desc, link_desc, tail, tail_desc
+
+
+class DiseaseDataset(Dataset):
+    def __init__(self, args: DataArguments):
+        super().__init__()
+        self.all_disease = pd.read_csv(args.all_disease_list)
+
+        with open(args.node_data, encoding='utf-8') as f:
+            node_data:Dict[str, List[Dict[str, str]]] = json.load(f)
+        self.node_data:Dict[str, str] = {k: " ".join([n["text"] for n in v]) for k,v in node_data.items()}
+
+    def __len__(self):
+        return len(self.links)
+
+    def __getitem__(self, index):
+        disease = self.all_disease.iloc[index]
+        return index, disease['icd_code'] + " " + disease['long_title'], self.node_data[disease['icd_code']]
+
+
+@dataclass
+class DiseaseCollator(DataCollatorWithPadding):
+    input_max_len: int = 8192
+
+    def tokenize(self, sentence):
+        return self.tokenizer(
+            sentence,
+            padding=True,
+            truncation=True,
+            max_length=self.input_max_len,
+            return_tensors="pt",
+        )
+
+    def __call__(self, features):
+        idx, d_name, d_desc = zip(*features)
+        return idx, self.tokenize(d_name), self.tokenize(d_desc)

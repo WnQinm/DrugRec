@@ -5,7 +5,6 @@ from pathlib import Path
 from transformers import AutoTokenizer, HfArgumentParser, set_seed
 
 from src.utils.arguments import ModelArguments, DataArguments, TrainArguments
-from src.utils.data import TrainDatasetForEmbedding, EmbedCollator
 from src.model.bgem3 import M3DenseEmbedModel
 from src.utils.trainer import CustomTrainer
 
@@ -13,6 +12,13 @@ from src.utils.trainer import CustomTrainer
 def main(json_path):
     parser = HfArgumentParser((ModelArguments, DataArguments, TrainArguments))
     model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(json_path))
+
+    if training_args.training_goal == "drug":
+        from src.utils.data import DrugDataset as CustomDataset
+        from src.utils.data import DrugCollator as CustomCollator
+    elif training_args.training_goal == "disease":
+        from src.utils.data import DiseaseDataset as CustomDataset
+        from src.utils.data import DiseaseCollator as CustomCollator
 
     if model_args.train_with_qlora:
         training_args.optim = "paged_adamw_32bit"
@@ -47,14 +53,14 @@ def main(json_path):
                 v.requires_grad = False
 
     logging.info("load dataset...")
-    train_dataset = TrainDatasetForEmbedding(args=data_args)
+    train_dataset = CustomDataset(args=data_args)
 
     logging.info("prepare trainer...")
     trainer = CustomTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
-        data_collator=EmbedCollator(
+        data_collator=CustomCollator(
             tokenizer=tokenizer,
             input_max_len=data_args.input_max_len
         ),

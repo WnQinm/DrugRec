@@ -8,13 +8,13 @@ from typing import Union
 
 
 class Model(M3DenseEmbedModel):
-    def __init__(self, model_args:ModelArguments, features: Union[Tensor, os.PathLike]=None):
+    def __init__(self, model_args:ModelArguments, features: Union[Tensor, os.PathLike]):
         super().__init__(model_args)
         self.cache_dir = model_args.cache_dir
         self._init_features(features)
         self._init_P()
 
-    def _init_features(self, origin_features: Union[Tensor, os.PathLike]=None):
+    def _init_features(self, origin_features: Union[Tensor, os.PathLike]):
         if not hasattr(self, "features"):
             if isinstance(origin_features, Tensor):
                 self.features = nn.Parameter(origin_features, requires_grad=True)

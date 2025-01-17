@@ -13,13 +13,19 @@
     ],
     "cache_dir": "./cache",
 
+
     "drug_data": "./data/drugs.json",
     "pos2neg": "./data/drugs_neg.json",
     "link_data": "./data/links.json",
     "train_group_size": 8,
+
+    "all_disease_list": "./data/all_disease.csv",
+    "node_data": "./data/disease_search_res.json",
     "input_max_len": 1024,
 
+
     "fix_position_embedding": false,
+    "training_goal": "disease",
     "output_dir": "./output",
     "per_device_train_batch_size": 8,
     "gradient_accumulation_steps": 1,
