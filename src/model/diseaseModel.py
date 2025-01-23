@@ -17,11 +17,12 @@ class Model(M3DenseEmbedModel):
     def _init_features(self, origin_features: Union[Tensor, os.PathLike]):
         if not hasattr(self, "features"):
             if isinstance(origin_features, Tensor):
-                self.features = nn.Parameter(origin_features, requires_grad=True)
+                self.register_buffer("features", origin_features)
             elif os.path.exists(origin_features):
-                self.features = nn.Parameter(torch.load(origin_features), requires_grad=True)
+                self.register_buffer("features", torch.load(origin_features, weights_only=False))
             else:
                 raise NotImplementedError(f"features not found")
+        self.features: Tensor
 
     @staticmethod
     def normalize_adj_matrix(adj: Tensor):
@@ -36,10 +37,10 @@ class Model(M3DenseEmbedModel):
         return normalized_adj
 
     def _init_P(self):
-        adj_path = os.path.join(self.cache_dir, "adj.pth")
+        adj_path = os.path.join(self.cache_dir, "adj.pt")
         graph_data_path = os.path.join(self.cache_dir, "disease_graph.json")
         if os.path.exists(adj_path):
-            adj = torch.load(adj_path)
+            adj = torch.load(adj_path, map_location=self.device, weights_only=False)
         elif os.path.exists(graph_data_path):
             with open(graph_data_path, encoding='utf-8') as f:
                 graph_data = json.load(f)
@@ -51,12 +52,16 @@ class Model(M3DenseEmbedModel):
             torch.save(adj, adj_path)
         else:
             raise FileNotFoundError(f"[{adj_path}] or [{graph_data_path}] not found")
-        self.register_buffer('P', (1 - torch.eye(adj.shape[0])) * adj)
+
+        mask = (1 - torch.eye(adj.shape[0], device=self.device))
+        self.register_buffer('P', mask * adj)
+        self.P: Tensor
 
     def forward(self, inputs):
         idx, x = inputs
+        # (bs, embed_dim)
         x = self.encode(x)
         self.features[idx] = x
         px = torch.mm(self.P, self.features)
-        score = self.dense_score(x, px[idx])
-        return -score
+        score = torch.diagonal(self.dense_score(x, px[idx]))
+        return -torch.sum(score)

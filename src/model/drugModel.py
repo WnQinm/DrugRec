@@ -12,7 +12,9 @@ class Model(M3DenseEmbedModel):
         self.info_nce = InfoNCE(negative_mode="paired")
 
     def entity_embed_loss(self, head:Tensor, head_desc:Tensor, tail:Tensor, tail_desc:Tensor) -> Tensor:
+        # (bs+bs, embed_size)
         q_dense_vecs = torch.cat([head[:, 0, :], tail[:, 0, :]], dim=0)
+        # (bs+bs, group_size, embed_size)
         p_dense_vecs = torch.cat([head_desc, tail_desc], dim=0)
 
         idxs = torch.arange(q_dense_vecs.size(0), device=q_dense_vecs.device, dtype=torch.long)
