@@ -1,3 +1,5 @@
+# drug
+
 data:
 
 - entity, desc
@@ -18,3 +20,23 @@ loss:
 $$
 -\log\frac{e^{s(q)/\tau}}{e^{s(q+)/\tau}+\sum e^{s(q-)/\tau}}
 $$
+
+# disease
+
+data:
+
+- entity, symptoms
+- link: co-occurrence
+
+loss:
+
+- node-level embedding
+- dot product similarity
+
+$$
+P=M(\tilde D^{-\frac 12}\tilde A\tilde D^{-\frac 12})^k\in\mathbb R^{n\times n}
+$$
+
+- 将node embedding保存为cache，训练模型时每个batch进行推理并更新cache，提高效率
+
+<img src="./assets/disease_batch_update.png" alt="image-20250124020037706" width="25%" />
