@@ -20,7 +20,7 @@
     "train_group_size": 8,
 
     "all_disease_list": "./data/all_disease.csv",
-    "node_data": "./data/disease_search_res.json",
+    "mimic_disease_data": "./data/icd2text.json",
     "input_max_len": 1024,
 
 

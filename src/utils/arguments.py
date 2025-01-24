@@ -1,4 +1,3 @@
-import os
 from dataclasses import dataclass, field
 from typing import Optional, Union, List
 
@@ -59,9 +58,8 @@ class DataArguments:
         default="./data/all_disease.csv",
         metadata={"help": ""}
     )
-    node_data: str = field(
-        default="./data/disease_search_res.json",
-        metadata={"help": ""}
+    mimic_disease_data: str = field(
+        default="./data/icd2text.json"
     )
 
     input_max_len: int = field(

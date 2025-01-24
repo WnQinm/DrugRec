@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Union, List
+from typing import Dict, Union, List
 
 from ..utils.arguments import ModelArguments
 
@@ -6,6 +6,7 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 from transformers import AutoModel, AutoTokenizer, XLMRobertaModel, XLMRobertaTokenizer
+from transformers.tokenization_utils import BatchEncoding
 
 
 class M3DenseEmbedModel(nn.Module):
@@ -31,7 +32,7 @@ class M3DenseEmbedModel(nn.Module):
 
     def load_model(self, model_load_args:ModelArguments):
         if model_load_args.train_with_qlora:
-            self.model: XLMRobertaModel = AutoModel.from_pretrained(
+            self.model = AutoModel.from_pretrained(
                 model_load_args.model_path,
                 low_cpu_mem_usage=True,
                 torch_dtype=torch.bfloat16,
@@ -45,15 +46,16 @@ class M3DenseEmbedModel(nn.Module):
             torch_dtype = torch.float32
             if model_load_args.model_with_fp16:
                 torch_dtype = torch.half
-            self.model: XLMRobertaModel = AutoModel.from_pretrained(
+            self.model = AutoModel.from_pretrained(
                 model_load_args.model_path,
                 low_cpu_mem_usage=True,
                 device_map="auto",
                 torch_dtype=torch_dtype,
                 add_pooling_layer=False,
             )
-
-        self.tokenizer:XLMRobertaTokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
+        self.model: XLMRobertaModel
+        self.tokenizer: XLMRobertaTokenizer
 
         if model_load_args.train_with_lora:
             from peft import LoraConfig, TaskType, get_peft_model
@@ -74,7 +76,7 @@ class M3DenseEmbedModel(nn.Module):
             dense_vecs = F.normalize(dense_vecs, dim=-1)
         return dense_vecs
 
-    def encode(self, features: Dict[str, Tensor]=None) -> Tensor:
+    def encode(self, features: BatchEncoding=None) -> Tensor:
         if features is None:
             return None
 

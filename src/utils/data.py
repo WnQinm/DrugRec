@@ -1,12 +1,15 @@
 import random
 import json
 from dataclasses import dataclass
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple
 
 import datasets
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
+from torch.nn.functional import softmax
 from transformers import DataCollatorWithPadding
+from transformers.tokenization_utils_base import BatchEncoding
 
 from .arguments import DataArguments
 
@@ -21,7 +24,7 @@ class DrugDataset(Dataset):
         self.total_len = len(self.link_data)
 
     def _load_json(self, file_path) -> dict:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def __len__(self):
@@ -102,17 +105,27 @@ class DiseaseDataset(Dataset):
     def __init__(self, args: DataArguments):
         super().__init__()
         self.all_disease = pd.read_csv(args.all_disease_list)
+        self.disease_data = self._load_json(args.mimic_disease_data)
+        self.select_num = 8
 
-        with open(args.node_data, encoding='utf-8') as f:
-            node_data:Dict[str, List[Dict[str, str]]] = json.load(f)
-        self.node_data:Dict[str, str] = {k: " ".join([n["text"] for n in v]) for k,v in node_data.items()}
+    def _load_json(self, file_path) -> dict:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     def __len__(self):
-        return len(self.links)
+        return len(self.all_disease)
 
     def __getitem__(self, index):
         disease = self.all_disease.iloc[index]
-        return index, disease['icd_code'] + " " + disease['long_title'], self.node_data[disease['icd_code']]
+        disease_data = self.disease_data[disease['icd_code']]
+        if len(disease_data) > self.select_num:
+            disease_data = sorted(disease_data, key=lambda x: eval(x["weight"]))[:self.select_num]
+        return (
+            index,
+            disease["icd_code"] + " " + disease["long_title"],
+            [d["ChiefComplaint"] for d in disease_data],
+            [d["weight"] for d in disease_data],
+        )
 
 
 @dataclass
@@ -128,6 +141,13 @@ class DiseaseCollator(DataCollatorWithPadding):
             return_tensors="pt",
         )
 
-    def __call__(self, features):
-        idx, d_name, d_desc = zip(*features)
-        return idx, self.tokenize(d_name), self.tokenize(d_desc)
+    def __call__(self, features) -> Tuple[List[int], BatchEncoding, List[BatchEncoding], List[torch.Tensor]]:
+        idx, d_name, d_desc, d_weight = zip(*features)
+        d_name = self.tokenize(d_name)
+        d_desc = list(map(self.tokenize, d_desc))
+        # (("1/8", "6/7", ...), ...)
+        d_weight = [
+            softmax(torch.tensor([1 - eval(w) for w in dw]), dim=0).unsqueeze_(1)
+            for dw in d_weight
+        ]
+        return idx, d_name, d_desc, d_weight

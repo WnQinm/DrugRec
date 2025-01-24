@@ -1,10 +1,11 @@
 import os
 import json
 import torch
-from torch import nn, Tensor
+from torch import Tensor
+from transformers.tokenization_utils import BatchEncoding
 from .bgem3 import M3DenseEmbedModel
 from ..utils.arguments import ModelArguments
-from typing import Union
+from typing import Union, List, Tuple
 
 
 class Model(M3DenseEmbedModel):
@@ -57,11 +58,29 @@ class Model(M3DenseEmbedModel):
         self.register_buffer('P', mask * adj)
         self.P: Tensor
 
-    def forward(self, inputs):
-        idx, x = inputs
-        # (bs, embed_dim)
-        x = self.encode(x)
-        self.features[idx] = x
+    def encode(self, features: Union[BatchEncoding, List[BatchEncoding]], weights: List[Tensor]=None) -> Tensor:
+        if isinstance(features, BatchEncoding):
+            return super(Model, self).encode(features)
+        elif isinstance(features, list) and weights is not None:
+            # p: (feature: BatchEncoding, weight: Tensor)
+            aggregate = lambda p: torch.sum(super(Model, self).encode(p[0]) * p[1], dim=0)
+            return torch.stack(list(map(aggregate, zip(features, weights))))
+        else:
+            raise NotImplementedError
+
+    def entity_embed_loss(self, entity, desc):
+        return -torch.mean(torch.diagonal(self.dense_score(entity, desc)))
+
+    def kg_embed_loss(self, idx, desc):
+        self.features[idx] = desc
         px = torch.mm(self.P, self.features)
-        score = torch.diagonal(self.dense_score(x, px[idx]))
-        return -torch.sum(score)
+        return -torch.mean(torch.diagonal(self.dense_score(desc, px[idx])))
+
+    def forward(self, inputs:Tuple[List[int], BatchEncoding, List[BatchEncoding], List[torch.Tensor]]):
+        # (bs, ) (bs, ) (bs, desc_len) (bs, desc_len)
+        idx, icd_name, desc, weight = inputs
+        # (bs, embed_dim)
+        icd_name = self.encode(icd_name)
+        desc = self.encode(desc, weight)
+        # TODO loss大小可能有影响
+        return (self.entity_embed_loss(icd_name, desc) + self.kg_embed_loss(idx, desc)) / 2

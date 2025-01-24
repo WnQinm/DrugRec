@@ -5,7 +5,7 @@ from transformers.file_utils import ModelOutput
 import torch
 from torch import Tensor
 from dataclasses import dataclass
-from typing import List, Dict, Union, Tuple, Optional
+from typing import Union, Tuple, Optional
 from src.model.bgem3 import M3DenseEmbedModel
 
 

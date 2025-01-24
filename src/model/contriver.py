@@ -2,7 +2,7 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 import os
 
-from typing import Optional, Union, List, Dict, Tuple, Iterable, Callable, Any
+from typing import List, Dict
 
 class ContrieverScorer:
     def __init__(self, tokenizer_path, retriever_ckpt_path, device=None, max_batch_size=400) -> None:
