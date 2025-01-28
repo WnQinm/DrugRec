@@ -30,7 +30,17 @@ class ModelArguments:
     )
     train_with_qlora: bool = field(default=False, metadata={"help": ""})
 
-    cache_dir: str = field(default="./cache", metadata={"help": ""})
+    cache_dir: str = field(
+        default="./cache",
+        metadata={
+            "help": """
+            'disease_features.pt':
+                - 疾病预先计算好的特征向量 每个疾病对应一个嵌入向量 (disease_num, embed_dim)
+                - 嵌入向量来源于疾病描述/常见症状等描述性文本
+                - 此处暂时使用mimic iv中病人症状按seq_num加权计算而得
+            """
+        },
+    )
 
 
 @dataclass

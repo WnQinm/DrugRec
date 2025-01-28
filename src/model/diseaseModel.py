@@ -9,18 +9,17 @@ from typing import Union, List, Tuple
 
 
 class Model(M3DenseEmbedModel):
-    def __init__(self, model_args:ModelArguments, features: Union[Tensor, os.PathLike]):
+    def __init__(self, model_args:ModelArguments):
         super().__init__(model_args)
         self.cache_dir = model_args.cache_dir
-        self._init_features(features)
+        self._init_features()
         self._init_P()
 
-    def _init_features(self, origin_features: Union[Tensor, os.PathLike]):
+    def _init_features(self):
+        feature_path = os.path.join(self.cache_dir, "disease_features.pt")
         if not hasattr(self, "features"):
-            if isinstance(origin_features, Tensor):
-                self.register_buffer("features", origin_features)
-            elif os.path.exists(origin_features):
-                self.register_buffer("features", torch.load(origin_features, weights_only=False))
+            if os.path.exists(feature_path):
+                self.register_buffer("features", torch.load(feature_path, weights_only=False))
             else:
                 raise NotImplementedError(f"features not found")
         self.features: Tensor
