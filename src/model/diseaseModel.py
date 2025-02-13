@@ -71,6 +71,8 @@ class Model(M3DenseEmbedModel):
         return -torch.mean(torch.diagonal(self.dense_score(entity, desc)))
 
     def kg_embed_loss(self, idx, desc):
+        self.features = self.features.detach()
+
         self.features[idx] = desc
         px = torch.mm(self.P, self.features)
         return -torch.mean(torch.diagonal(self.dense_score(desc, px[idx])))

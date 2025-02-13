@@ -5,7 +5,6 @@ from pathlib import Path
 from transformers import AutoTokenizer, HfArgumentParser, set_seed
 
 from src.utils.arguments import ModelArguments, DataArguments, TrainArguments
-from src.model.bgem3 import M3DenseEmbedModel
 from src.utils.trainer import CustomTrainer
 
 
@@ -16,9 +15,11 @@ def main(json_path):
     if training_args.training_goal == "drug":
         from src.utils.data import DrugDataset as CustomDataset
         from src.utils.data import DrugCollator as CustomCollator
+        from src.model.drugModel import Model
     elif training_args.training_goal == "disease":
         from src.utils.data import DiseaseDataset as CustomDataset
         from src.utils.data import DiseaseCollator as CustomCollator
+        from src.model.diseaseModel import Model
 
     if model_args.train_with_qlora:
         training_args.optim = "paged_adamw_32bit"
@@ -42,7 +43,7 @@ def main(json_path):
     set_seed(training_args.seed)
 
     logging.info("load model...")
-    model = M3DenseEmbedModel(model_args)
+    model = Model(model_args)
     model.train()
     tokenizer = model.tokenizer
 

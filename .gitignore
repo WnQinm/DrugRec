@@ -138,3 +138,4 @@ test.*
 *.drawio.svg
 !data/get_drug_graph.ipynb
 cache/*
+output/*
