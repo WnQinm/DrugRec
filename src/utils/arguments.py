@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional, Union, List
+import os
 
 from transformers import TrainingArguments
 
@@ -21,15 +22,6 @@ class ModelArguments:
     normlized: bool = field(default=True, metadata={"help": ""})
     temperature: float = field(default=0.02, metadata={"help": ""})
     encode_sub_batch_size: int = field(default=1, metadata={"help": ""})
-    model_with_fp16: bool = field(default=False, metadata={"help": ""})
-    lora_with_fp16: bool = field(default=False, metadata={"help": ""})
-    train_with_lora: bool = field(default=False, metadata={"help": ""})
-    lora_modules: Union[str, List[str]] = field(
-        default=None,
-        metadata={"help": ""},
-    )
-    train_with_qlora: bool = field(default=False, metadata={"help": ""})
-
     cache_dir: str = field(
         default="./cache",
         metadata={
@@ -41,6 +33,22 @@ class ModelArguments:
             """
         },
     )
+
+    model_with_fp16: bool = field(default=False, metadata={"help": ""})
+    lora_with_fp16: bool = field(default=False, metadata={"help": ""})
+    train_with_lora: bool = field(default=False, metadata={"help": ""})
+    lora_path: Optional[str] = field(default=None, metadata={"help": "lora weight path"})
+    lora_modules: Union[str, List[str]] = field(
+        default=None,
+        metadata={"help": ""},
+    )
+
+    def __post_init__(self):
+        if "adapter_config.json" in os.listdir(self.model_path):
+            from peft import LoraConfig
+            self.train_with_lora = True
+            self.lora_path = self.model_path
+            self.model_path = LoraConfig.from_pretrained(self.lora_path).base_model_name_or_path
 
 
 @dataclass

@@ -31,36 +31,30 @@ class M3DenseEmbedModel(nn.Module):
         self.model.gradient_checkpointing_enable(**kwargs)
 
     def load_model(self, model_load_args:ModelArguments):
-        if model_load_args.train_with_qlora:
-            self.model = AutoModel.from_pretrained(
-                model_load_args.model_path,
-                low_cpu_mem_usage=True,
-                torch_dtype=torch.bfloat16,
-                device_map="auto",
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True,
-            )
-        else:
-            torch_dtype = torch.float32
-            if model_load_args.model_with_fp16:
-                torch_dtype = torch.half
-            self.model = AutoModel.from_pretrained(
-                model_load_args.model_path,
-                low_cpu_mem_usage=True,
-                device_map="auto",
-                torch_dtype=torch_dtype,
-                add_pooling_layer=False,
-            )
+
+        torch_dtype = torch.float32
+        if model_load_args.model_with_fp16:
+            torch_dtype = torch.half
+        self.model = AutoModel.from_pretrained(
+            model_load_args.model_path,
+            low_cpu_mem_usage=True,
+            device_map="auto",
+            torch_dtype=torch_dtype,
+            add_pooling_layer=False,
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(model_load_args.tokenizer_path)
         self.model: XLMRobertaModel
         self.tokenizer: XLMRobertaTokenizer
 
         if model_load_args.train_with_lora:
-            from peft import LoraConfig, TaskType, get_peft_model
-            config = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION, target_modules=model_load_args.lora_modules)
-            self.model = get_peft_model(self.model, config)
+            if model_load_args.lora_path:
+                from peft import PeftModel
+                self.model = PeftModel.from_pretrained(self.model, model_load_args.lora_path)
+            else:
+                from peft import LoraConfig, TaskType, get_peft_model
+                config = LoraConfig(task_type=TaskType.FEATURE_EXTRACTION, target_modules=model_load_args.lora_modules)
+                self.model = get_peft_model(self.model, config)
+
             if model_load_args.lora_with_fp16:
                 for name, param in self.model.named_parameters():
                     if "lora" in name:
@@ -111,7 +105,7 @@ class M3ForInference(M3DenseEmbedModel):
     def __init__(
         self,
         model_load_args: ModelArguments = None,
-        use_fp16: bool = True
+        use_fp16: bool = False
     ):
         super().__init__(model_load_args)
         if not torch.cuda.is_available():

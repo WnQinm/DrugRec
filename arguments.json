@@ -4,14 +4,14 @@
     "normlized": true,
     "temperature": 0.02,
     "encode_sub_batch_size": 1,
-    "train_with_qlora": false,
+    "cache_dir": "./cache",
+
     "model_with_fp16": false,
     "train_with_lora": true,
     "lora_with_fp16": false,
     "lora_modules": [
         "query", "value"
     ],
-    "cache_dir": "./cache",
 
 
     "drug_data": "./data/drugs.json",
@@ -32,7 +32,7 @@
     "learning_rate": 1e-5,
     "num_train_epochs": 5,
     "logging_steps": 10,
-    "save_steps": 500,
+    "save_steps": 50,
     "dataloader_drop_last": true,
     "dataloader_num_workers": 8,
     "save_total_limit": 5,

@@ -21,10 +21,6 @@ def main(json_path):
         from src.utils.data import DiseaseCollator as CustomCollator
         from src.model.diseaseModel import Model
 
-    if model_args.train_with_qlora:
-        training_args.optim = "paged_adamw_32bit"
-        training_args.adam_epsilon = 1e-4
-
     # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
