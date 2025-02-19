@@ -40,3 +40,14 @@ $$
 - 将node embedding保存为cache，训练模型时每个batch进行推理并更新cache，提高效率
 
 <img src="./assets/disease_batch_update.png" alt="image-20250124020037706" width="25%" />
+
+# Environmental preparation
+
+```bash
+conda create -n medrec python=3.9
+conda activate medrec
+conda install -c pytorch faiss-cpu
+pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
+pip install tqdm==4.67.1 transformers==4.37.2 accelerate==0.33.0 peft==0.12.0 datasets==3.2.0
+```
+
